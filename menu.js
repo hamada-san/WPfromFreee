@@ -9,8 +9,5 @@ function onOpen() {
     .addSeparator()
     .addItem("📄 新規クライアント作成", "createNewClient")
     .addItem("🔄 選択したクライアントの試算表を再取得", "refreshSelectedClient")
-    .addSeparator()
-    .addItem("試算表取得（このシート）", "getTrialBalanceAndPL")
     .addToUi();
 }
-

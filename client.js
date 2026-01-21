@@ -31,6 +31,30 @@ function createNewClient() {
   ui.showModalDialog(html, '事業所を選択してください');
 }
 
+function getFiscalYearsForDialog(companyId) {
+  const accessToken = getService().getAccessToken();
+  return getFiscalYearsForCompany(companyId, accessToken);
+}
+
+function extractFolderId(input) {
+  const value = String(input || "").trim();
+  if (!value) return "";
+  const foldersMatch = value.match(/folders\/([a-zA-Z0-9_-]+)/);
+  if (foldersMatch) return foldersMatch[1];
+  const idMatch = value.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (idMatch) return idMatch[1];
+  if (value.includes("drive.google.com")) {
+    const parts = value.split("/");
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const part = parts[i];
+      if (part && !part.includes("view") && !part.includes("edit") && !part.includes("folders")) {
+        return part.split("?")[0];
+      }
+    }
+  }
+  return value;
+}
+
 /**
  * 事業所選択用HTMLを生成
  */
@@ -67,19 +91,25 @@ function createCompanySelectHtml(companies, savedFolderId, savedFolderName) {
     </head>
     <body>
       <div class="form-group">
-        <label>事業所を選択</label>
-        <select id="companyId">${options}</select>
+        <label>① 事業所を選択</label>
+        <select id="companyId" onchange="loadFiscalYears()">${options}</select>
       </div>
       <div class="form-group">
-        <label>保存先フォルダID</label>
+        <label>② 事業年度を選択</label>
+        <select id="fiscalYear">
+          <option value="">読み込み中...</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>③ 保存先フォルダURL</label>
         <div class="folder-section">
           <div class="folder-info" id="folderInfo">📁 現在の保存先: ${savedFolderName}</div>
           <input type="text" id="folderId" value="${savedFolderId}">
           <div class="note">※ 空欄の場合はマイドライブ直下に作成されます</div>
-          <div class="note">※ フォルダIDはGoogleドライブのフォルダURLの末尾の文字列です</div>
+          <div class="note">※ フォルダURLを貼り付けるか、フォルダIDを入力してください</div>
         </div>
       </div>
-      <div class="file-note">📄 ファイル名: WP_事業所名_○○年○月期</div>
+      
       <div class="button-row">
         <button class="cancel-btn" onclick="google.script.host.close()">キャンセル</button>
         <button id="submitBtn" class="submit-btn" onclick="submitForm()">作成して試算表取得</button>
@@ -89,6 +119,15 @@ function createCompanySelectHtml(companies, savedFolderId, savedFolderName) {
         function submitForm() {
           const companyId = document.getElementById('companyId').value;
           const folderId = document.getElementById('folderId').value.trim();
+          const fiscalYearValue = document.getElementById('fiscalYear').value;
+          if (!companyId) {
+            alert('事業所を選択してください。');
+            return;
+          }
+          if (!fiscalYearValue) {
+            alert('事業年度を選択してください。');
+            return;
+          }
           document.getElementById('submitBtn').disabled = true;
           document.getElementById('loading').style.display = 'block';
           google.script.run
@@ -98,8 +137,33 @@ function createCompanySelectHtml(companies, savedFolderId, savedFolderName) {
               document.getElementById('submitBtn').disabled = false;
               document.getElementById('loading').style.display = 'none';
             })
-            .processNewClient(companyId, folderId);
+            .processNewClient(companyId, folderId, fiscalYearValue);
         }
+        
+        function loadFiscalYears() {
+          const companyId = document.getElementById('companyId').value;
+          const fiscalSelect = document.getElementById('fiscalYear');
+          fiscalSelect.innerHTML = '<option value="">読み込み中...</option>';
+          google.script.run
+            .withSuccessHandler(function(list) {
+              if (!list || list.length === 0) {
+                fiscalSelect.innerHTML = '<option value="">事業年度が登録されていません</option>';
+                return;
+              }
+              fiscalSelect.innerHTML = list.map(function(fy, idx) {
+                const value = fy.startDate + '|' + fy.endDate;
+                const selected = idx === 0 ? ' selected' : '';
+                return '<option value=\"' + value + '\"' + selected + '>' + fy.label + '</option>';
+              }).join('');
+            })
+            .withFailureHandler(function(error) {
+              fiscalSelect.innerHTML = '<option value=\"\">読み込み失敗</option>';
+              alert('エラー: ' + error.message);
+            })
+            .getFiscalYearsForDialog(companyId);
+        }
+        
+        loadFiscalYears();
       </script>
     </body>
     </html>`;
@@ -108,9 +172,20 @@ function createCompanySelectHtml(companies, savedFolderId, savedFolderName) {
 /**
  * 新規クライアント処理
  */
-function processNewClient(companyId, folderId) {
+function processNewClient(companyId, folderId, fiscalYearValue) {
   const accessToken = getService().getAccessToken();
-  const companyDetails = getCompanyDetails(companyId, accessToken);
+  if (!fiscalYearValue) {
+    throw new Error("事業年度を選択してください。");
+  }
+  const fiscalParts = String(fiscalYearValue).split("|");
+  const startDateStr = fiscalParts[0];
+  const endDateStr = fiscalParts[1];
+  if (!startDateStr || !endDateStr) {
+    throw new Error("事業年度の指定が不正です。");
+  }
+  const folderInput = folderId;
+  folderId = extractFolderId(folderInput);
+  const companyDetails = getCompanyDetails(companyId, accessToken, startDateStr, endDateStr);
   const workerEmail = Session.getActiveUser().getEmail();
   
   const mainSs = SpreadsheetApp.getActiveSpreadsheet();
@@ -125,20 +200,47 @@ function processNewClient(companyId, folderId) {
   }
   
   const fileName = `WP_${companyDetails.companyName}_${companyDetails.periodLabel}`;
-  const newSs = mainSs.copy(fileName);
+  const newSs = SpreadsheetApp.create(fileName);
   const newSsId = newSs.getId();
   const newSsUrl = newSs.getUrl();
+  let folderUrl = "";
   
-  ["クライアント一覧", "事業所リスト"].forEach(sheetName => {
-    const sheet = newSs.getSheetByName(sheetName);
-    if (sheet) newSs.deleteSheet(sheet);
+  const excludedSheets = ["クライアント一覧", "事業所リスト"];
+  const templateSheets = mainSs.getSheets();
+  const defaultSheet = newSs.getSheets()[0];
+  let hasCopied = false;
+  if (defaultSheet) {
+    defaultSheet.setName("_tmp_default");
+  }
+  templateSheets.forEach(sheet => {
+    const name = sheet.getName();
+    if (excludedSheets.includes(name)) return;
+    const copied = sheet.copyTo(newSs);
+    copied.setName(name);
+    hasCopied = true;
   });
+  if (defaultSheet && hasCopied) {
+    newSs.deleteSheet(defaultSheet);
+  }
+  copyNamedRanges(mainSs, newSs);
+  copyFormulasFromTemplate(mainSs, newSs);
   
   if (folderId) {
     try {
       DriveApp.getFileById(newSsId).moveTo(DriveApp.getFolderById(folderId));
+      folderUrl = DriveApp.getFolderById(folderId).getUrl();
     } catch (e) {
       Logger.log("フォルダ移動エラー: " + e.message);
+    }
+  }
+  if (!folderUrl) {
+    try {
+      const parents = DriveApp.getFileById(newSsId).getParents();
+      if (parents.hasNext()) {
+        folderUrl = parents.next().getUrl();
+      }
+    } catch (e) {
+      Logger.log("フォルダURL取得エラー: " + e.message);
     }
   }
   
@@ -163,13 +265,13 @@ function processNewClient(companyId, folderId) {
   if (plSheet) plSheet.getRange("B1").setValue(companyDetails.companyName);
   
   try {
-    getTrialBalanceAndPLCore(newSs, companyDetails.companyId, companyDetails.startDate, companyDetails.endDate, companyDetails.companyName);
+    getTrialBalanceAndPLCore(newSs, companyDetails.companyId, companyDetails.startDate, companyDetails.endDate);
   } catch (e) {
-    addToClientList(configSheet, companyDetails, newSsId, newSsUrl, "❌ エラー", workerEmail);
+    addToClientList(configSheet, companyDetails, newSsId, newSsUrl, folderUrl, "❌ エラー", workerEmail);
     throw new Error("シートは作成しましたが、試算表取得でエラー: " + e.message);
   }
   
-  addToClientList(configSheet, companyDetails, newSsId, newSsUrl, "✅ 完了", workerEmail);
+  addToClientList(configSheet, companyDetails, newSsId, newSsUrl, folderUrl, "✅ 完了", workerEmail);
   
   SpreadsheetApp.getActiveSpreadsheet().toast(`「${companyDetails.companyName}」のシートを作成しました。`, "完了", 5);
   
@@ -211,7 +313,7 @@ function refreshSelectedClient() {
   }
   
   try {
-    configSheet.getRange(activeRow, 7).setValue("処理中...");
+    configSheet.getRange(activeRow, 8).setValue("処理中...");
     SpreadsheetApp.flush();
     
     const accessToken = getService().getAccessToken();
@@ -228,17 +330,71 @@ function refreshSelectedClient() {
     configSheet.getRange(activeRow, 3).setValue(companyDetails.periodLabel);
     configSheet.getRange(activeRow, 4).setValue(new Date(companyDetails.endDate));
     
-    getTrialBalanceAndPLCore(targetSs, companyDetails.companyId, companyDetails.startDate, companyDetails.endDate, companyDetails.companyName);
+    getTrialBalanceAndPLCore(targetSs, companyDetails.companyId, companyDetails.startDate, companyDetails.endDate);
     
-    configSheet.getRange(activeRow, 7).setValue("✅ 完了");
-    configSheet.getRange(activeRow, 8).setValue(getTimestamp());
-    configSheet.getRange(activeRow, 9).setValue(workerEmail);
+    configSheet.getRange(activeRow, 8).setValue("✅ 完了");
+    configSheet.getRange(activeRow, 9).setValue(getTimestamp());
+    configSheet.getRange(activeRow, 10).setValue(workerEmail);
     
     ui.alert("完了", `「${companyName}」の試算表を再取得しました。`, ui.ButtonSet.OK);
   } catch (e) {
-    configSheet.getRange(activeRow, 7).setValue("❌ エラー");
-    configSheet.getRange(activeRow, 8).setValue(getTimestamp());
+    configSheet.getRange(activeRow, 8).setValue("❌ エラー");
+    configSheet.getRange(activeRow, 9).setValue(getTimestamp());
     ui.alert("エラー", e.message, ui.ButtonSet.OK);
   }
 }
 
+function copyNamedRanges(sourceSs, targetSs) {
+  const existing = {};
+  targetSs.getNamedRanges().forEach(nr => {
+    existing[nr.getName()] = true;
+  });
+  
+  sourceSs.getNamedRanges().forEach(nr => {
+    const name = nr.getName();
+    const range = nr.getRange();
+    const sheetName = range.getSheet().getName();
+    const targetSheet = targetSs.getSheetByName(sheetName);
+    if (!targetSheet) return;
+    const targetRange = targetSheet.getRange(range.getA1Notation());
+    if (existing[name]) {
+      try {
+        targetSs.removeNamedRange(name);
+      } catch (e) {
+        Logger.log("NamedRange削除エラー: " + e.message);
+      }
+    }
+    try {
+      targetSs.setNamedRange(name, targetRange);
+    } catch (e) {
+      Logger.log("NamedRange作成エラー: " + e.message);
+    }
+  });
+}
+
+function copyFormulasFromTemplate(sourceSs, targetSs) {
+  sourceSs.getSheets().forEach(sourceSheet => {
+    const targetSheet = targetSs.getSheetByName(sourceSheet.getName());
+    if (!targetSheet) return;
+    const dataRange = sourceSheet.getDataRange();
+    const formulas = dataRange.getFormulas();
+    const startRow = dataRange.getRow();
+    const startCol = dataRange.getColumn();
+    for (let r = 0; r < formulas.length; r++) {
+      let c = 0;
+      while (c < formulas[r].length) {
+        if (!formulas[r][c]) {
+          c++;
+          continue;
+        }
+        const start = c;
+        while (c < formulas[r].length && formulas[r][c]) {
+          c++;
+        }
+        const width = c - start;
+        const rowFormulas = [formulas[r].slice(start, c)];
+        targetSheet.getRange(startRow + r, startCol + start, 1, width).setFormulas(rowFormulas);
+      }
+    }
+  });
+}

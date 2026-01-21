@@ -1,7 +1,7 @@
 /**
  * 試算表・PLを取得してシートに出力（コア処理）
  */
-function getTrialBalanceAndPLCore(ss, companyId) {
+function getTrialBalanceAndPLCore(ss, companyId, startDateStr, endDateStr) {
   const service = getService();
   if (!service.hasAccess()) {
     throw new Error("認証されていません。メニューから認証を行ってください。");
@@ -23,16 +23,31 @@ function getTrialBalanceAndPLCore(ss, companyId) {
     throw new Error("会計年度情報が取得できません。");
   }
   
-  // 最新の会計年度を使用
-  const targetFiscalYear = fiscalYears[fiscalYears.length - 1];
+  let targetFiscalYear = null;
+  if (startDateStr && endDateStr) {
+    targetFiscalYear = fiscalYears.find(fy => fy.start_date === startDateStr && fy.end_date === endDateStr);
+    if (!targetFiscalYear) {
+      const endDate = new Date(endDateStr);
+      targetFiscalYear = fiscalYears.find(fy => {
+        const start = new Date(fy.start_date);
+        const end = new Date(fy.end_date);
+        return start <= endDate && endDate <= end;
+      });
+    }
+    if (!targetFiscalYear) {
+      throw new Error("指定した事業年度が見つかりません。");
+    }
+  } else {
+    // 最新の会計年度を使用
+    targetFiscalYear = fiscalYears[fiscalYears.length - 1];
+    startDateStr = targetFiscalYear.start_date;
+    endDateStr = targetFiscalYear.end_date;
+  }
   
-  const fiscalYear = parseInt(targetFiscalYear.start_date.substring(0, 4));
-  const startMonth = parseInt(targetFiscalYear.start_date.substring(5, 7));
-  const endMonth = parseInt(targetFiscalYear.end_date.substring(5, 7));
-  const endYear = parseInt(targetFiscalYear.end_date.substring(0, 4));
-  
-  const startDateStr = targetFiscalYear.start_date;
-  const endDateStr = targetFiscalYear.end_date;
+  const fiscalYear = parseInt(startDateStr.substring(0, 4), 10);
+  const startMonth = parseInt(startDateStr.substring(5, 7), 10);
+  const endMonth = parseInt(endDateStr.substring(5, 7), 10);
+  const endYear = parseInt(endDateStr.substring(0, 4), 10);
   
   // 期ラベル（YY/MM-YY/MM形式）
   const formatPeriod = (startY, startM, endY, endM) => {
@@ -43,10 +58,11 @@ function getTrialBalanceAndPLCore(ss, companyId) {
     return sy + "/" + sm + "-" + ey + "/" + em;
   };
   
+  const startYear = parseInt(startDateStr.substring(0, 4), 10);
   const periodLabels = {
-    current: formatPeriod(endYear - 1, startMonth, endYear, endMonth),
-    previous: formatPeriod(endYear - 2, startMonth, endYear - 1, endMonth),
-    twoYearsAgo: formatPeriod(endYear - 3, startMonth, endYear - 2, endMonth)
+    current: formatPeriod(startYear, startMonth, endYear, endMonth),
+    previous: formatPeriod(startYear - 1, startMonth, endYear - 1, endMonth),
+    twoYearsAgo: formatPeriod(startYear - 2, startMonth, endYear - 2, endMonth)
   };
   
   // 税区分を取得
@@ -66,9 +82,9 @@ function getTrialBalanceAndPLCore(ss, companyId) {
   if (bsSheet) {
     const bsLastRow = bsSheet.getLastRow();
     if (bsLastRow >= 17) {
-      bsSheet.getRange(17, 2, bsLastRow - 16, 11).clearContent();
-      bsSheet.getRange(17, 2, bsLastRow - 16, 11).setBorder(false, false, false, false, false, false);
-      bsSheet.getRange(17, 2, bsLastRow - 16, 11).setBackground(null);
+      bsSheet.getRange(17, 2, bsLastRow - 16, 8).clearContent();
+      bsSheet.getRange(17, 2, bsLastRow - 16, 8).setBorder(false, false, false, false, false, false);
+      bsSheet.getRange(17, 2, bsLastRow - 16, 8).setBackground(null);
     }
     
     bsSheet.getRange("G15").setValue(timestamp);
@@ -78,7 +94,7 @@ function getTrialBalanceAndPLCore(ss, companyId) {
     const bsBalances = JSON.parse(bsRes.getContentText()).trial_bs.balances;
     
     const bsHeaders = ["分類", "勘定科目", "期首残高", "借方金額", "貸方金額", "期末残高", "", "", "プリペアコメント", "基礎資料又はfreee仕訳リンク", "レビュワーコメント"];
-    bsSheet.getRange(16, 2, 1, bsHeaders.length).setValues([bsHeaders]);
+    bsSheet.getRange(16, 2, 1, 8).setValues([bsHeaders.slice(0, 8)]);
     
     const bsRows = bsBalances.map(i => {
       let category = "";
@@ -105,7 +121,7 @@ function getTrialBalanceAndPLCore(ss, companyId) {
       for (let i = 0; i < bsRows.length; i++) {
         const categoryName = bsRows[i][0].replace(/^▼/, "").trim();
         if (bsBorderTargets.includes(categoryName)) {
-          bsSheet.getRange(17 + i, 2, 1, 11).setBorder(true, false, false, false, false, false, "#000000", SpreadsheetApp.BorderStyle.SOLID);
+          bsSheet.getRange(17 + i, 2, 1, 8).setBorder(true, false, false, false, false, false, "#000000", SpreadsheetApp.BorderStyle.SOLID);
         }
       }
     }
@@ -116,9 +132,9 @@ function getTrialBalanceAndPLCore(ss, companyId) {
   if (plSheet) {
     const plLastRow = plSheet.getLastRow();
     if (plLastRow >= 17) {
-      plSheet.getRange(17, 2, plLastRow - 16, 11).clearContent();
-      plSheet.getRange(17, 2, plLastRow - 16, 11).setBorder(false, false, false, false, false, false);
-      plSheet.getRange(17, 2, plLastRow - 16, 11).setBackground(null);
+      plSheet.getRange(17, 2, plLastRow - 16, 8).clearContent();
+      plSheet.getRange(17, 2, plLastRow - 16, 8).setBorder(false, false, false, false, false, false);
+      plSheet.getRange(17, 2, plLastRow - 16, 8).setBackground(null);
     }
     
     plSheet.getRange("G15").setValue(timestamp);
@@ -130,7 +146,7 @@ function getTrialBalanceAndPLCore(ss, companyId) {
     const plBalances = JSON.parse(plRes.getContentText()).trial_pl_three_years.balances;
     
     const plHeaders = ["分類", "勘定科目", periodLabels.twoYearsAgo, periodLabels.previous, periodLabels.current, "前年差額", "前年比", "", "プリペアコメント", "基礎資料又はfreee仕訳リンク", "レビュワーコメント"];
-    plSheet.getRange(16, 2, 1, plHeaders.length).setValues([plHeaders]);
+    plSheet.getRange(16, 2, 1, 8).setValues([plHeaders.slice(0, 8)]);
     
     const plRows = plBalances.map(item => {
       const currClosing = Number(item.closing_balance) || 0;
@@ -160,7 +176,7 @@ function getTrialBalanceAndPLCore(ss, companyId) {
       const plBorderTargets = ["売上総損益金額", "営業損益金額", "経常損益金額", "税引前当期純損益金額", "当期純損益金額"];
       for (let i = 0; i < plRows.length; i++) {
         if (plBorderTargets.includes(plRows[i][0].trim())) {
-          plSheet.getRange(17 + i, 2, 1, 11).setBorder(true, false, false, false, false, false, "#000000", SpreadsheetApp.BorderStyle.SOLID);
+          plSheet.getRange(17 + i, 2, 1, 8).setBorder(true, false, false, false, false, false, "#000000", SpreadsheetApp.BorderStyle.SOLID);
         }
       }
     }
@@ -171,9 +187,9 @@ function getTrialBalanceAndPLCore(ss, companyId) {
   if (crSheet) {
     const crLastRow = crSheet.getLastRow();
     if (crLastRow >= 17) {
-      crSheet.getRange(17, 2, crLastRow - 16, 11).clearContent();
-      crSheet.getRange(17, 2, crLastRow - 16, 11).setBorder(false, false, false, false, false, false);
-      crSheet.getRange(17, 2, crLastRow - 16, 11).setBackground(null);
+      crSheet.getRange(17, 2, crLastRow - 16, 8).clearContent();
+      crSheet.getRange(17, 2, crLastRow - 16, 8).setBorder(false, false, false, false, false, false);
+      crSheet.getRange(17, 2, crLastRow - 16, 8).setBackground(null);
     }
     
     crSheet.getRange("G15").setValue(timestamp);
@@ -191,7 +207,7 @@ function getTrialBalanceAndPLCore(ss, companyId) {
           crSheet.getRange("B16").setValue("製造原価報告書");
           
           const crHeaders = ["分類", "勘定科目", periodLabels.twoYearsAgo, periodLabels.previous, periodLabels.current, "前年差額", "前年比", "", "プリペアコメント", "基礎資料又はfreee仕訳リンク", "レビュワーコメント"];
-          crSheet.getRange(16, 2, 1, crHeaders.length).setValues([crHeaders]);
+          crSheet.getRange(16, 2, 1, 8).setValues([crHeaders.slice(0, 8)]);
           
           const crRows = crBalances.map(item => {
             const currClosing = Number(item.closing_balance) || 0;
@@ -241,15 +257,482 @@ function getTrialBalanceAndPLCore(ss, companyId) {
   const plBalancesForOrder = JSON.parse(UrlFetchApp.fetch(baseUrl + "trial_pl?company_id=" + companyId + "&start_date=" + startDateStr + "&end_date=" + endDateStr, options).getContentText()).trial_pl?.balances || [];
   const accountOrder = buildAccountOrder(bsBalancesForOrder, plBalancesForOrder);
   
-  getTaxCategoryReportCore(ss, companyId, startDateStr, endDateStr, taxAccountingMethod, accountOrder, timestamp);
+  const taxCategoryResult = getTaxCategoryReportCore(ss, companyId, startDateStr, endDateStr, taxAccountingMethod, accountOrder, timestamp);
+
+  // ===== PL税務検討用元帳（CSV版）=====
+  const accountItemCategoryMap = getAccountItemCategoryMap(companyId);
+  try {
+    getPLTaxLedgerCore(ss, companyId, startDateStr, endDateStr, accountItemCategoryMap, timestamp);
+  } catch (e) {
+    Logger.log("PL税務検討用元帳取得エラー: " + e.message);
+    // CSV取得失敗時はAPI版のデータを使用
+    if (taxCategoryResult && taxCategoryResult.plLedgerRows) {
+      writePLTaxLedgerSheet(ss, taxCategoryResult.plLedgerRows, timestamp);
+    }
+  }
+
+  // ===== BS税務検討用内訳 =====
+  try {
+    getBSTaxBreakdownCore(ss, companyId, startDateStr, endDateStr, accountItemCategoryMap, timestamp);
+  } catch (e) {
+    Logger.log("BS税務検討用内訳取得エラー: " + e.message);
+  }
   
   // ===== 固定資産台帳 =====
-  getFixedAssetsCore(ss, companyId, fiscalYear);
+  getFixedAssetsCore(ss, companyId, fiscalYear, startDateStr);
 }
 
 /**
  * 仕訳数を取得（reports.gs用）
  */
+/**
+ * 勘定科目名 -> 大分類のマップを作成
+ */
+function getAccountItemCategoryMap(companyId) {
+  const service = getService();
+  if (!service.hasAccess()) {
+    return {};
+  }
+  
+  const options = {
+    method: "get",
+    headers: { Authorization: "Bearer " + service.getAccessToken() },
+    muteHttpExceptions: true
+  };
+  
+  const url = "https://api.freee.co.jp/api/1/account_items?company_id=" + companyId;
+  const res = UrlFetchApp.fetch(url, options);
+  const items = JSON.parse(res.getContentText()).account_items || [];
+  const map = {};
+  items.forEach(item => {
+    const categories = item.categories || [];
+    const key = normalizeText(item.name);
+    map[key] = categories.length > 0 ? categories[0] : (item.account_category || "");
+  });
+  return map;
+}
+
+/**
+ * 仕訳帳CSVを取得
+ */
+function getJournalsCsvRows(companyId, startDate, endDate) {
+  const service = getService();
+  if (!service.hasAccess()) {
+    throw new Error("認証されていません。");
+  }
+  
+  const options = {
+    method: "get",
+    headers: { Authorization: "Bearer " + service.getAccessToken() },
+    muteHttpExceptions: true
+  };
+  
+  const baseUrl = "https://api.freee.co.jp/api/1/journals";
+  const url = baseUrl +
+    "?company_id=" + companyId +
+    "&start_date=" + startDate +
+    "&end_date=" + endDate +
+    "&download_type=generic" +
+    "&encoding=sjis";
+  
+  const res = UrlFetchApp.fetch(url, options);
+  const data = JSON.parse(res.getContentText()).journals;
+  if (!data || !data.status_url) {
+    throw new Error("仕訳帳のステータスURLが取得できません。");
+  }
+  
+  const statusUrl = appendQueryParam(data.status_url, "company_id", companyId);
+  let downloadUrl = "";
+  const maxTries = 30;
+  
+  for (let i = 0; i < maxTries; i++) {
+    const statusRes = UrlFetchApp.fetch(statusUrl, options);
+    const statusData = JSON.parse(statusRes.getContentText()).journals;
+    if (statusData.status === "uploaded" && statusData.download_url) {
+      downloadUrl = appendQueryParam(statusData.download_url, "company_id", companyId);
+      break;
+    }
+    if (statusData.status === "failed") {
+      throw new Error("仕訳帳の生成に失敗しました。");
+    }
+    Utilities.sleep(2000);
+  }
+  
+  if (!downloadUrl) {
+    throw new Error("仕訳帳CSVの生成がタイムアウトしました。");
+  }
+  
+  const csvRes = UrlFetchApp.fetch(downloadUrl, options);
+  let csvText = csvRes.getContentText("Shift_JIS");
+  if (csvText.charCodeAt(0) === 0xFEFF) {
+    csvText = csvText.slice(1);
+  }
+  let rows = Utilities.parseCsv(csvText, "\t");
+  if (!rows || rows.length === 0) {
+    return rows;
+  }
+  const isHeaderRow = (row) => {
+    if (!row) return false;
+    const hasDate = row.some(v => normalizeText(v) === "取引日");
+    const hasDebit = row.some(v => normalizeText(v) === "借方勘定科目");
+    return hasDate && hasDebit;
+  };
+  const headerIndex = rows.findIndex(isHeaderRow);
+  if (headerIndex > 0) {
+    rows = rows.slice(headerIndex);
+  }
+  const headers = rows[0];
+  if (rows.length > 1) {
+    const first = rows[1];
+    const isNumber = v => /^\d+$/.test(String(v || "").trim());
+    const isDate = v => /^\d{4}\/\d{1,2}\/\d{1,2}$/.test(String(v || "").trim());
+    // 旧CSVで先頭に行番号列が付くケースの補正
+    if (normalizeText(headers[0]) === "取引日" && isNumber(first[0]) && isDate(first[1])) {
+      rows[0] = ["行番号"].concat(headers);
+      return rows;
+    }
+    if (normalizeText(headers[0]) === "" && normalizeText(headers[1]) === "取引日" && isNumber(first[0]) && isDate(first[1])) {
+      rows[0][0] = "行番号";
+      return rows;
+    }
+  }
+  return rows;
+}
+
+function appendQueryParam(url, key, value) {
+  const separator = url.indexOf("?") >= 0 ? "&" : "?";
+  return url + separator + encodeURIComponent(key) + "=" + encodeURIComponent(value);
+}
+
+function findHeaderIndex(headers, candidates) {
+  for (let i = 0; i < candidates.length; i++) {
+    const target = candidates[i];
+    for (let j = 0; j < headers.length; j++) {
+      const normalized = normalizeText(headers[j]);
+      if (normalized === target) {
+        return j;
+      }
+      if (normalized.includes(target)) {
+        return j;
+      }
+    }
+  }
+  return -1;
+}
+
+function parseAmount(value) {
+  if (value === null || value === undefined) return 0;
+  const s = String(value).replace(/,/g, "").trim();
+  if (s === "") return 0;
+  const n = Number(s);
+  return isNaN(n) ? 0 : n;
+}
+
+function normalizeText(value) {
+  return String(value || "").replace(/\u3000/g, " ").trim();
+}
+
+function matchesTargetAccount(accountName, targets) {
+  if (!accountName) return false;
+  for (let i = 0; i < targets.length; i++) {
+    if (accountName === targets[i]) return true;
+    if (accountName.includes(targets[i])) return true;
+  }
+  return false;
+}
+
+function getCategoryForAccount(accountName, accountItemCategoryMap) {
+  if (!accountName) return "";
+  if (accountItemCategoryMap[accountName]) return accountItemCategoryMap[accountName];
+  const keys = Object.keys(accountItemCategoryMap);
+  for (let i = 0; i < keys.length; i++) {
+    if (accountName === keys[i] || accountName.includes(keys[i])) {
+      return accountItemCategoryMap[keys[i]];
+    }
+  }
+  return "";
+}
+
+function getNameMapFromEndpoint(resource, companyId) {
+  const service = getService();
+  if (!service.hasAccess()) {
+    return {};
+  }
+  
+  const options = {
+    method: "get",
+    headers: { Authorization: "Bearer " + service.getAccessToken() },
+    muteHttpExceptions: true
+  };
+  
+  const map = {};
+  const limit = 3000;
+  let offset = 0;
+  let key = "";
+  if (resource === "partners") key = "partners";
+  if (resource === "items") key = "items";
+  if (resource === "tags") key = "tags";
+  if (!key) return map;
+  
+  while (true) {
+    const url = "https://api.freee.co.jp/api/1/" + resource +
+      "?company_id=" + companyId +
+      "&limit=" + limit +
+      "&offset=" + offset;
+    const res = UrlFetchApp.fetch(url, options);
+    const data = JSON.parse(res.getContentText());
+    const list = data[key] || [];
+    list.forEach(item => {
+      map[item.id] = item.name || "";
+    });
+    if (list.length < limit) break;
+    offset += limit;
+  }
+  return map;
+}
+
+function getTagNames(tagIds, tagMap) {
+  if (!tagIds || tagIds.length === 0) return "";
+  const names = tagIds.map(id => tagMap[id]).filter(name => name);
+  return names.join("、");
+}
+
+function writePLTaxLedgerSheet(ss, rows, timestamp) {
+  const sheet = ss.getSheetByName("PL税務検討用元帳");
+  if (!sheet) {
+    return;
+  }
+  if (timestamp) {
+    sheet.getRange("G15").setValue(timestamp);
+  }
+  
+  const lastRow = sheet.getLastRow();
+  if (lastRow >= 17) {
+    sheet.getRange(17, 2, lastRow - 16, 9).clearContent();
+  }
+  
+  const headersRow = ["大分類", "勘定科目", "税区分", "取引先タグ", "品目タグ", "メモタグ", "摘要", "借方金額", "貸方金額"];
+  sheet.getRange(16, 2, 1, headersRow.length).setValues([headersRow]);
+  
+  if (rows && rows.length > 0) {
+    sheet.getRange(17, 2, rows.length, 9).setValues(rows);
+  }
+}
+
+/**
+ * PL税務検討用元帳を出力
+ */
+function getPLTaxLedgerCore(ss, companyId, startDate, endDate, accountItemCategoryMap, timestamp) {
+  const sheet = ss.getSheetByName("PL税務検討用元帳");
+  if (!sheet) {
+    return;
+  }
+  if (timestamp) {
+    sheet.getRange("G15").setValue(timestamp);
+  }
+  
+  const targetAccounts = ["雑収入", "雑損失", "固定資産売却益", "固定資産売却損"]
+    .map(name => normalizeText(name));
+  const rows = getJournalsCsvRows(companyId, startDate, endDate);
+  if (!rows || rows.length === 0) {
+    return;
+  }
+  
+  const headers = rows[0];
+  // デバッグ用：ヘッダーをログ出力
+  Logger.log("仕訳帳CSVヘッダー: " + JSON.stringify(headers));
+
+  const debitAccountIdx = findHeaderIndex(headers, ["借方勘定科目", "借方科目", "借方勘定科目名"]);
+  const creditAccountIdx = findHeaderIndex(headers, ["貸方勘定科目", "貸方科目", "貸方勘定科目名"]);
+  const debitAmountIdx = findHeaderIndex(headers, ["借方金額"]);
+  const creditAmountIdx = findHeaderIndex(headers, ["貸方金額"]);
+  const debitTaxIdx = findHeaderIndex(headers, ["借方税区分", "借方税区分名"]);
+  const creditTaxIdx = findHeaderIndex(headers, ["貸方税区分", "貸方税区分名"]);
+  // 取引先：freee仕訳帳CSVでは「取引先」列が1つ
+  const partnerIdx = findHeaderIndex(headers, ["取引先", "取引先名"]);
+  const debitPartnerIdx = findHeaderIndex(headers, ["借方取引先"]);
+  const creditPartnerIdx = findHeaderIndex(headers, ["貸方取引先"]);
+  // 品目：freee仕訳帳CSVでは「品目」列が1つ
+  const itemIdx = findHeaderIndex(headers, ["品目", "品目名"]);
+  const debitItemIdx = findHeaderIndex(headers, ["借方品目"]);
+  const creditItemIdx = findHeaderIndex(headers, ["貸方品目"]);
+  // メモタグ：freee仕訳帳CSVでは「メモタグ」列が1つ
+  const tagIdx = findHeaderIndex(headers, ["メモタグ", "タグ"]);
+  const debitTagIdx = findHeaderIndex(headers, ["借方メモタグ"]);
+  const creditTagIdx = findHeaderIndex(headers, ["貸方メモタグ"]);
+  // 摘要：freee仕訳帳CSVでは「摘要」列が1つ
+  const descIdx = findHeaderIndex(headers, ["摘要", "備考"]);
+  const debitDescIdx = findHeaderIndex(headers, ["借方摘要"]);
+  const creditDescIdx = findHeaderIndex(headers, ["貸方摘要"]);
+  
+  const output = [];
+
+  // ヘルパー関数：借方/貸方別インデックス → 共通インデックスのフォールバック
+  const getVal = (row, specificIdx, commonIdx) => {
+    if (specificIdx >= 0 && row[specificIdx]) return normalizeText(row[specificIdx]);
+    if (commonIdx >= 0 && row[commonIdx]) return normalizeText(row[commonIdx]);
+    return "";
+  };
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const debitAccount = normalizeText(debitAccountIdx >= 0 ? row[debitAccountIdx] : "");
+    const creditAccount = normalizeText(creditAccountIdx >= 0 ? row[creditAccountIdx] : "");
+    const debitAmount = parseAmount(debitAmountIdx >= 0 ? row[debitAmountIdx] : 0);
+    const creditAmount = parseAmount(creditAmountIdx >= 0 ? row[creditAmountIdx] : 0);
+
+    if (debitAccount && matchesTargetAccount(debitAccount, targetAccounts) && debitAmount !== 0) {
+      output.push([
+        getCategoryForAccount(debitAccount, accountItemCategoryMap),
+        debitAccount,
+        getVal(row, debitTaxIdx, -1),
+        getVal(row, debitPartnerIdx, partnerIdx),
+        getVal(row, debitItemIdx, itemIdx),
+        getVal(row, debitTagIdx, tagIdx),
+        getVal(row, debitDescIdx, descIdx),
+        debitAmount,
+        0
+      ]);
+    }
+    if (creditAccount && matchesTargetAccount(creditAccount, targetAccounts) && creditAmount !== 0) {
+      output.push([
+        getCategoryForAccount(creditAccount, accountItemCategoryMap),
+        creditAccount,
+        getVal(row, creditTaxIdx, -1),
+        getVal(row, creditPartnerIdx, partnerIdx),
+        getVal(row, creditItemIdx, itemIdx),
+        getVal(row, creditTagIdx, tagIdx),
+        getVal(row, creditDescIdx, descIdx),
+        0,
+        creditAmount
+      ]);
+    }
+  }
+  
+  const lastRow = sheet.getLastRow();
+  if (lastRow >= 17) {
+    sheet.getRange(17, 2, lastRow - 16, 9).clearContent();
+  }
+  
+  const headersRow = ["大分類", "勘定科目", "税区分", "取引先タグ", "品目タグ", "メモタグ", "摘要", "借方金額", "貸方金額"];
+  sheet.getRange(16, 2, 1, headersRow.length).setValues([headersRow]);
+  
+  if (output.length > 0) {
+    sheet.getRange(17, 2, output.length, 9).setValues(output);
+  }
+}
+
+/**
+ * BS税務検討用内訳を出力
+ */
+function getBSTaxBreakdownCore(ss, companyId, startDate, endDate, accountItemCategoryMap, timestamp) {
+  const sheet = ss.getSheetByName("BS税務検討用内訳");
+  if (!sheet) {
+    return;
+  }
+  if (timestamp) {
+    sheet.getRange("G15").setValue(timestamp);
+  }
+  
+  const partnerAccounts = ["未払金", "未払費用"];
+  const itemAccounts = ["預り金", "長期借入金"];
+  const partnerAccountsNormalized = partnerAccounts.map(name => normalizeText(name));
+  const itemAccountsNormalized = itemAccounts.map(name => normalizeText(name));
+  const output = [];
+  const subtotalRowOffsets = [];
+  const pushEntriesWithSubtotal = (accountName, entries) => {
+    if (!entries || entries.length === 0) return;
+    const category = accountItemCategoryMap[accountName] || "";
+    let sumOpening = 0;
+    let sumDebit = 0;
+    let sumCredit = 0;
+    let sumClosing = 0;
+    entries.forEach(entry => {
+      sumOpening += entry.opening_balance || 0;
+      sumDebit += entry.debit_amount || 0;
+      sumCredit += entry.credit_amount || 0;
+      sumClosing += entry.closing_balance || 0;
+      output.push([
+        category,
+        accountName,
+        entry.name || "",
+        entry.opening_balance || 0,
+        entry.debit_amount || 0,
+        entry.credit_amount || 0,
+        entry.closing_balance || 0
+      ]);
+    });
+    subtotalRowOffsets.push(output.length + 1);
+    output.push([
+      category,
+      accountName,
+      "小計",
+      sumOpening,
+      sumDebit,
+      sumCredit,
+      sumClosing
+    ]);
+    output.push(["", "", "", "", "", "", ""]);
+  };
+  
+  const partnerBalances = getTrialBSBreakdown(companyId, startDate, endDate, "partner");
+  partnerAccounts.forEach((accountName, idx) => {
+    const balance = partnerBalances.find(b => normalizeText(b.account_item_name) === partnerAccountsNormalized[idx]);
+    if (!balance) return;
+    const partners = (balance.partners || []).filter(p => p.closing_balance !== 0);
+    pushEntriesWithSubtotal(accountName, partners);
+  });
+  
+  const itemBalances = getTrialBSBreakdown(companyId, startDate, endDate, "item");
+  itemAccounts.forEach((accountName, idx) => {
+    const balance = itemBalances.find(b => normalizeText(b.account_item_name) === itemAccountsNormalized[idx]);
+    if (!balance) return;
+    const items = (balance.items || []).filter(item => item.closing_balance !== 0);
+    pushEntriesWithSubtotal(accountName, items);
+  });
+  
+  while (output.length > 0 && output[output.length - 1].every(v => v === "")) {
+    output.pop();
+  }
+  
+  const lastRow = sheet.getLastRow();
+  if (lastRow >= 17) {
+    sheet.getRange(17, 2, lastRow - 16, 7).clearContent();
+  }
+  
+  if (output.length > 0) {
+    sheet.getRange(17, 2, output.length, 7).setValues(output);
+    subtotalRowOffsets.forEach(offset => {
+      if (offset <= output.length) {
+        sheet.getRange(16 + offset, 2, 1, 7).setBorder(true, false, false, false, false, false);
+      }
+    });
+  }
+}
+
+function getTrialBSBreakdown(companyId, startDate, endDate, breakdownType) {
+  const service = getService();
+  if (!service.hasAccess()) {
+    return [];
+  }
+  
+  const options = {
+    method: "get",
+    headers: { Authorization: "Bearer " + service.getAccessToken() },
+    muteHttpExceptions: true
+  };
+  
+  const url = "https://api.freee.co.jp/api/1/reports/trial_bs" +
+    "?company_id=" + companyId +
+    "&start_date=" + startDate +
+    "&end_date=" + endDate +
+    "&account_item_display_type=account_item" +
+    "&breakdown_display_type=" + breakdownType;
+  const res = UrlFetchApp.fetch(url, options);
+  const json = JSON.parse(res.getContentText());
+  return json.trial_bs?.balances || [];
+}
+
 function getJournalCountForReport(companyId, startDate, endDate) {
   const service = getService();
   const options = {
@@ -332,9 +815,15 @@ function getTaxCategoryReportCore(ss, companyId, startDate, endDate, taxAccounti
   const accountItemsResponse = UrlFetchApp.fetch(accountItemsUrl, options);
   const accountItemsData = JSON.parse(accountItemsResponse.getContentText());
   const accountItems = {};
+  const accountItemIdToName = {};
+  const accountItemIdToCategory = {};
   if (accountItemsData.account_items) {
     accountItemsData.account_items.forEach(item => {
       accountItems[item.id] = item.name;
+      accountItemIdToName[item.id] = item.name;
+      accountItemIdToCategory[item.id] = (item.categories && item.categories.length > 0)
+        ? item.categories[0]
+        : (item.account_category || "");
     });
   }
   
@@ -348,6 +837,27 @@ function getTaxCategoryReportCore(ss, companyId, startDate, endDate, taxAccounti
       taxCodes[tax.code] = tax.name_ja || tax.name || String(tax.code);
     });
   }
+  
+  // PL税務検討用元帳の対象勘定科目
+  const targetAccountNames = ["雑収入", "雑損失", "固定資産売却益", "固定資産売却損"]
+    .map(name => normalizeText(name));
+  const targetAccountIds = Object.keys(accountItems).filter(id => {
+    const name = normalizeText(accountItems[id]);
+    return targetAccountNames.some(target => name === target || name.includes(target));
+  }).map(id => parseInt(id, 10));
+  const targetAccountIdSet = new Set(targetAccountIds);
+  
+  // マスタデータは対象勘定科目がある場合のみ取得（処理時間短縮）
+  let partnerMap = {};
+  let itemMap = {};
+  let tagMap = {};
+  if (targetAccountIds.length > 0) {
+    partnerMap = getNameMapFromEndpoint("partners", companyId);
+    itemMap = getNameMapFromEndpoint("items", companyId);
+    tagMap = getNameMapFromEndpoint("tags", companyId);
+  }
+  
+  const plLedgerRows = [];
   
   // 課税方式を取得
   const companyUrl = "https://api.freee.co.jp/api/1/companies/" + companyId;
@@ -365,9 +875,10 @@ function getTaxCategoryReportCore(ss, companyId, startDate, endDate, taxAccounti
   const limit = 100;
   
   while (true) {
-    const dealsUrl = "https://api.freee.co.jp/api/1/deals?company_id=" + companyId + 
-                     "&start_issue_date=" + startDate + "&end_issue_date=" + endDate + 
-                     "&limit=" + limit + "&offset=" + offset;
+    const dealsUrl = "https://api.freee.co.jp/api/1/deals?company_id=" + companyId +
+                     "&start_issue_date=" + startDate + "&end_issue_date=" + endDate +
+                     "&limit=" + limit + "&offset=" + offset +
+                     "&item=full";
     const dealsResponse = UrlFetchApp.fetch(dealsUrl, options);
     const dealsData = JSON.parse(dealsResponse.getContentText());
     
@@ -376,6 +887,11 @@ function getTaxCategoryReportCore(ss, companyId, startDate, endDate, taxAccounti
     }
     
     dealsData.deals.forEach(deal => {
+      // 取引レベルの情報を取得
+      const dealPartnerId = deal.partner_id;
+      const dealPartnerName = partnerMap[dealPartnerId] || "";
+      const dealRefNumber = deal.ref_number || "";
+
       if (deal.details) {
         deal.details.forEach(detail => {
           const accountName = accountItems[detail.account_item_id] || "";
@@ -383,13 +899,55 @@ function getTaxCategoryReportCore(ss, companyId, startDate, endDate, taxAccounti
           const amount = detail.amount || 0;
           const vat = detail.vat || 0;
           const isCredit = deal.type === "income";
-          
+
           taxCategoryData.push({
             accountName: accountName,
             taxCodeName: taxCodeName,
             amount: isCredit ? -amount : amount,
             vat: isCredit ? -vat : vat
           });
+
+          if (targetAccountIdSet.has(detail.account_item_id)) {
+            const debitAmount = isCredit ? 0 : amount;
+            const creditAmount = isCredit ? amount : 0;
+
+            // 取引先：明細 → 取引レベル
+            let partnerName = "";
+            if (detail.partner_id) {
+              partnerName = partnerMap[detail.partner_id] || "";
+            }
+            if (!partnerName && dealPartnerId) {
+              partnerName = dealPartnerName;
+            }
+
+            // 品目：明細レベル
+            let itemName = "";
+            if (detail.item_id) {
+              itemName = itemMap[detail.item_id] || "";
+            }
+
+            // タグ：明細レベル
+            let tagIds = detail.tag_ids || [];
+            const tagNames = getTagNames(tagIds, tagMap);
+
+            // 摘要：明細レベル → 取引レベルのref_number
+            let description = detail.description || "";
+            if (!description) {
+              description = dealRefNumber;
+            }
+
+            plLedgerRows.push([
+              accountItemIdToCategory[detail.account_item_id] || "",
+              accountName,
+              taxCodeName,
+              partnerName,
+              itemName,
+              tagNames,
+              description,
+              debitAmount,
+              creditAmount
+            ]);
+          }
         });
       }
     });
@@ -414,6 +972,10 @@ function getTaxCategoryReportCore(ss, companyId, startDate, endDate, taxAccounti
     }
     
     mjData.manual_journals.forEach(mj => {
+      // 振替伝票レベルの情報
+      const mjTagIds = mj.tag_ids || [];
+      const mjDescription = mj.description || "";
+      
       if (mj.details) {
         mj.details.forEach(detail => {
           const accountName = accountItems[detail.account_item_id] || "";
@@ -428,6 +990,48 @@ function getTaxCategoryReportCore(ss, companyId, startDate, endDate, taxAccounti
             amount: isCredit ? -amount : amount,
             vat: isCredit ? -vat : vat
           });
+          
+          if (targetAccountIdSet.has(detail.account_item_id)) {
+            const debitAmount = isCredit ? 0 : amount;
+            const creditAmount = isCredit ? amount : 0;
+            
+            // 取引先
+            let partnerName = "";
+            if (detail.partner_id) {
+              partnerName = partnerMap[detail.partner_id] || "";
+            }
+            
+            // 品目
+            let itemName = "";
+            if (detail.item_id) {
+              itemName = itemMap[detail.item_id] || "";
+            }
+            
+            // タグ：明細レベル → 振替伝票レベル
+            let tagIds = detail.tag_ids || [];
+            if (tagIds.length === 0) {
+              tagIds = mjTagIds;
+            }
+            const tagNames = getTagNames(tagIds, tagMap);
+            
+            // 摘要
+            let description = detail.description || "";
+            if (!description) {
+              description = mjDescription;
+            }
+            
+            plLedgerRows.push([
+              accountItemIdToCategory[detail.account_item_id] || "",
+              accountName,
+              taxCodeName,
+              partnerName,
+              itemName,
+              tagNames,
+              description,
+              debitAmount,
+              creditAmount
+            ]);
+          }
         });
       }
     });
@@ -544,13 +1148,9 @@ function getTaxCategoryReportCore(ss, companyId, startDate, endDate, taxAccounti
     sheet.getRange(44, 2, outputArray.length, 5).setValues(outputArray);
     sheet.getRange(44, 4, outputArray.length, 3).setNumberFormat("#,##0");
     
-    // データの最終行を特定
     const dataLastRow = 43 + outputArray.length;
-    
-    // 最終行の下に罫線（B～M列、12列分）
     sheet.getRange(dataLastRow, 2, 1, 12).setBorder(false, false, true, false, false, false, "#000000", SpreadsheetApp.BorderStyle.SOLID);
     
-    // データ最終行より下で、B列が空欄の行を一括削除
     const sheetLastRow = sheet.getLastRow();
     if (sheetLastRow > dataLastRow) {
       const bValues = sheet.getRange(dataLastRow + 1, 2, sheetLastRow - dataLastRow, 1).getValues();
@@ -575,12 +1175,20 @@ function getTaxCategoryReportCore(ss, companyId, startDate, endDate, taxAccounti
   sheet.setColumnWidth(4, 120);
   sheet.setColumnWidth(5, 100);
   sheet.setColumnWidth(6, 120);
+  
+  // PL税務検討用元帳のソート
+  plLedgerRows.sort((a, b) => {
+    const c = String(a[0]).localeCompare(String(b[0]), "ja");
+    if (c !== 0) return c;
+    return String(a[1]).localeCompare(String(b[1]), "ja");
+  });
+  
+  return {
+    plLedgerRows: plLedgerRows
+  };
 }
 
-/**
- * 固定資産台帳を取得してシートに出力
- */
-function getFixedAssetsCore(ss, companyId, fiscalYear) {
+function getFixedAssetsCore(ss, companyId, fiscalYear, targetDateStr) {
   const service = getService();
   if (!service.hasAccess()) {
     return;
@@ -598,7 +1206,8 @@ function getFixedAssetsCore(ss, companyId, fiscalYear) {
   };
   
   // 固定資産一覧を取得
-  const fixedAssetsUrl = "https://api.freee.co.jp/api/1/fixed_assets?company_id=" + companyId;
+  const fixedAssetsUrl = "https://api.freee.co.jp/api/1/fixed_assets?company_id=" + companyId +
+    (targetDateStr ? "&target_date=" + targetDateStr : "");
   const fixedAssetsResponse = UrlFetchApp.fetch(fixedAssetsUrl, options);
   const fixedAssetsData = JSON.parse(fixedAssetsResponse.getContentText());
   
@@ -615,19 +1224,20 @@ function getFixedAssetsCore(ss, companyId, fiscalYear) {
       asset.acquisition_cost || 0,
       asset.depreciation_method || "",
       asset.useful_life || "",
-      asset.accumulated_depreciation || 0,
-      asset.book_value || 0
+      asset.depreciation_amount || 0,
+      asset.closing_accumulated_depreciation || asset.accumulated_depreciation || 0,
+      asset.undepreciated_balance || asset.book_value || 0
     ]);
   });
   
   // シートをクリアして出力
   const lastRow = sheet.getLastRow();
   if (lastRow >= 5) {
-    sheet.getRange(5, 2, lastRow - 4, 7).clearContent();
+    sheet.getRange(5, 2, lastRow - 4, 8).clearContent();
   }
   
   if (outputData.length > 0) {
-    sheet.getRange(5, 2, outputData.length, 7).setValues(outputData);
+    sheet.getRange(5, 2, outputData.length, 8).setValues(outputData);
   }
   
   // タイムスタンプ

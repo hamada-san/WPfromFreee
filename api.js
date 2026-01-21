@@ -15,7 +15,7 @@ function fetchCompaniesFromFreee() {
 /**
  * 事業所の詳細情報を取得
  */
-function getCompanyDetails(companyId, accessToken) {
+function getCompanyDetails(companyId, accessToken, startDateStr, endDateStr) {
   const response = UrlFetchApp.fetch(
     `https://api.freee.co.jp/api/1/companies/${companyId}`,
     { method: 'get', headers: { Authorization: 'Bearer ' + accessToken } }
@@ -26,23 +26,38 @@ function getCompanyDetails(companyId, accessToken) {
     throw new Error("会計年度情報が取得できませんでした。");
   }
 
-  const today = new Date();
   const fiscalYears = company.fiscal_years
     .filter(y => y.start_date && y.end_date)
     .sort((a, b) => new Date(b.start_date) - new Date(a.start_date));
 
   let currentFy = null;
-  for (const fy of fiscalYears) {
-    const start = new Date(fy.start_date);
-    const end = new Date(fy.end_date);
-    if (start <= today && today <= end) {
-      currentFy = fy;
-      break;
+  if (startDateStr && endDateStr) {
+    currentFy = fiscalYears.find(fy => fy.start_date === startDateStr && fy.end_date === endDateStr);
+    if (!currentFy) {
+      const endDate = new Date(endDateStr);
+      currentFy = fiscalYears.find(fy => {
+        const start = new Date(fy.start_date);
+        const end = new Date(fy.end_date);
+        return start <= endDate && endDate <= end;
+      });
+    }
+  } else {
+    const today = new Date();
+    for (const fy of fiscalYears) {
+      const start = new Date(fy.start_date);
+      const end = new Date(fy.end_date);
+      if (start <= today && today <= end) {
+        currentFy = fy;
+        break;
+      }
+    }
+    if (!currentFy) {
+      currentFy = fiscalYears[0];
     }
   }
-
+  
   if (!currentFy) {
-    currentFy = fiscalYears[0];
+    throw new Error("事業年度が取得できませんでした。");
   }
 
   const endDate = new Date(currentFy.end_date);
@@ -68,6 +83,28 @@ function getCompanyDetails(companyId, accessToken) {
     taxAccountingMethod: company.tax_at_source_calc_type === 0 ? "税込経理" : "税抜経理",
     taxType: getTaxTypeFromCompany(company)
   };
+}
+
+function getFiscalYearsForCompany(companyId, accessToken) {
+  const response = UrlFetchApp.fetch(
+    `https://api.freee.co.jp/api/1/companies/${companyId}`,
+    { method: 'get', headers: { Authorization: 'Bearer ' + accessToken } }
+  );
+  const company = JSON.parse(response.getContentText()).company;
+  const years = (company.fiscal_years || [])
+    .filter(y => y.start_date && y.end_date)
+    .sort((a, b) => new Date(b.end_date) - new Date(a.end_date))
+    .map(y => {
+      const endDate = new Date(y.end_date);
+      const year = endDate.getFullYear();
+      const month = endDate.getMonth() + 1;
+      return {
+        startDate: y.start_date,
+        endDate: y.end_date,
+        label: `${year}年${month}月期`
+      };
+    });
+  return years;
 }
 
 /**
@@ -174,4 +211,3 @@ function getPeriodLabels(companyId, accessToken, endDateStr) {
     twoYearsAgoPeriod: twoYearsAgo ? `${fmt(startY - 2, startM)} - ${fmt(endM >= startM ? endY - 2 : endY - 1, endM)}` : null
   };
 }
-

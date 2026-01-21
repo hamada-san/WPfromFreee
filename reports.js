@@ -885,7 +885,25 @@ function getTaxCategoryReportCore(ss, companyId, startDate, endDate, taxAccounti
       const isCredit = deal.type === "income";
 
       if (deal.details) {
-        deal.details.forEach(detail => {
+        // 対象勘定科目を含むかチェック
+        const hasTargetAccount = deal.details.some(d => targetAccountIdSet.has(d.account_item_id));
+
+        // 対象勘定科目を含む場合、個別APIで詳細を取得
+        let detailsToUse = deal.details;
+        if (hasTargetAccount) {
+          try {
+            const dealDetailUrl = "https://api.freee.co.jp/api/1/deals/" + deal.id + "?company_id=" + companyId;
+            const dealDetailRes = UrlFetchApp.fetch(dealDetailUrl, options);
+            const dealDetailData = JSON.parse(dealDetailRes.getContentText());
+            if (dealDetailData.deal && dealDetailData.deal.details) {
+              detailsToUse = dealDetailData.deal.details;
+            }
+          } catch (e) {
+            Logger.log("取引詳細取得エラー deal.id=" + deal.id + ": " + e.message);
+          }
+        }
+
+        detailsToUse.forEach(detail => {
           const accountName = accountItems[detail.account_item_id] || "";
           const taxCodeName = taxCodes[detail.tax_code] || "対象外";
           const amount = detail.amount || 0;
@@ -921,11 +939,8 @@ function getTaxCategoryReportCore(ss, companyId, startDate, endDate, taxAccounti
             let tagIds = detail.tag_ids || [];
             const tagNames = getTagNames(tagIds, tagMap);
 
-            // 摘要：明細の備考 → 取引レベルの備考
+            // 摘要：明細の備考
             let description = detail.description || "";
-            if (!description) {
-              description = deal.description || "";
-            }
 
             plLedgerRows.push([
               accountItemIdToCategory[detail.account_item_id] || "",
@@ -963,54 +978,67 @@ function getTaxCategoryReportCore(ss, companyId, startDate, endDate, taxAccounti
     }
     
     mjData.manual_journals.forEach(mj => {
-      // 振替伝票レベルの情報
-      const mjTagIds = mj.tag_ids || [];
-      const mjDescription = mj.description || "";
-      
       if (mj.details) {
-        mj.details.forEach(detail => {
+        // 対象勘定科目を含むかチェック
+        const hasTargetAccount = mj.details.some(d => targetAccountIdSet.has(d.account_item_id));
+
+        // 対象勘定科目を含む場合、個別APIで詳細を取得
+        let detailsToUse = mj.details;
+        let mjDescription = "";
+        if (hasTargetAccount) {
+          try {
+            const mjDetailUrl = "https://api.freee.co.jp/api/1/manual_journals/" + mj.id + "?company_id=" + companyId;
+            const mjDetailRes = UrlFetchApp.fetch(mjDetailUrl, options);
+            const mjDetailData = JSON.parse(mjDetailRes.getContentText());
+            if (mjDetailData.manual_journal && mjDetailData.manual_journal.details) {
+              detailsToUse = mjDetailData.manual_journal.details;
+              mjDescription = mjDetailData.manual_journal.description || "";
+            }
+          } catch (e) {
+            Logger.log("振替伝票詳細取得エラー mj.id=" + mj.id + ": " + e.message);
+          }
+        }
+
+        detailsToUse.forEach(detail => {
           const accountName = accountItems[detail.account_item_id] || "";
           const taxCodeName = taxCodes[detail.tax_code] || "対象外";
           const amount = detail.amount || 0;
           const vat = detail.vat || 0;
           const isCredit = detail.entry_side === "credit";
-          
+
           taxCategoryData.push({
             accountName: accountName,
             taxCodeName: taxCodeName,
             amount: isCredit ? -amount : amount,
             vat: isCredit ? -vat : vat
           });
-          
+
           if (targetAccountIdSet.has(detail.account_item_id)) {
             const debitAmount = isCredit ? 0 : amount;
             const creditAmount = isCredit ? amount : 0;
-            
+
             // 取引先
             let partnerName = "";
             if (detail.partner_id) {
               partnerName = partnerMap[detail.partner_id] || "";
             }
-            
+
             // 品目
             let itemName = "";
             if (detail.item_id) {
               itemName = itemMap[detail.item_id] || "";
             }
-            
-            // タグ：明細レベル → 振替伝票レベル
+
+            // タグ：明細レベル
             let tagIds = detail.tag_ids || [];
-            if (tagIds.length === 0) {
-              tagIds = mjTagIds;
-            }
             const tagNames = getTagNames(tagIds, tagMap);
-            
-            // 摘要
+
+            // 摘要：明細 → 振替伝票レベル
             let description = detail.description || "";
             if (!description) {
               description = mjDescription;
             }
-            
+
             plLedgerRows.push([
               accountItemIdToCategory[detail.account_item_id] || "",
               accountName,
